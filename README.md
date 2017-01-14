@@ -12,7 +12,7 @@ Google App Engine custom runtime for Rust
 ## Build
 
     cargo build --target=x86_64-unknown-linux-musl --release
-    strip app/target/x86_64-unknown-linux-musl/release/app
+    strip target/x86_64-unknown-linux-musl/release/appengine-rust
     gcloud beta debug source gen-repo-info-file
 
 # Deploy

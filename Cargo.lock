@@ -1,5 +1,5 @@
 [root]
-name = "app"
+name = "appengine-rust"
 version = "0.1.0"
 dependencies = [
  "futures 0.1.8 (registry+https://github.com/rust-lang/crates.io-index)",
