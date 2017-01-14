@@ -6,6 +6,9 @@ authors = ["Matt Williams <matwilliams@hotmail.com>"]
 [dependencies]
 hyper = { git = "https://github.com/hyperium/hyper.git", branch = "tokio" }
 futures = "0.1.7"
+tokio-core = "0.1"
+tokio-proto = "0.1"
+tokio-service = "0.1"
 
 [profile.release]
 lto = true

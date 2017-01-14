@@ -14,6 +14,8 @@ static INDEX: &'static [u8] = br"<!DOCTYPE html>
 </body>
 </html>";
 
+pub mod memcache;
+
 #[derive(Clone, Copy)]
 struct Echo;
 
