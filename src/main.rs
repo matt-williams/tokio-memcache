@@ -30,6 +30,9 @@ impl Service for Echo {
                 }
                 res.with_body(req.body())
             },
+            (&Get, Some("/_ah/health")) => {
+                Response::new()
+            },
             _ => {
                 Response::new()
                     .with_status(StatusCode::NotFound)
