@@ -6,8 +6,6 @@ Google App Engine custom runtime for Rust
 
     curl https://sh.rustup.rs -sSf | sh
     rustup target add x86_64-unknown-linux-musl
-    apt-get install protobuf-compiler
-    cargo install protobuf
 
 ## Build
 
