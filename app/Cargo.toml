@@ -1,0 +1,9 @@
+[package]
+name = "app"
+version = "0.1.0"
+authors = ["Matt Williams <matwilliams@hotmail.com>"]
+
+[dependencies]
+hyper = { git = "https://github.com/hyperium/hyper.git", branch = "tokio" }
+futures = "0.1.7"
+protobuf = "1.1.0"
