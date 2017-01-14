@@ -1,5 +1,7 @@
 extern crate futures;
 extern crate hyper;
+#[macro_use]
+extern crate nom;
 
 use hyper::{Get, Post, StatusCode};
 use hyper::header::ContentLength;

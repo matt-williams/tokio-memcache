@@ -12,6 +12,7 @@ use self::tokio_proto::pipeline::{ServerProto, ClientProto, ClientService};
 use self::tokio_service::{Service, NewService};
 use std::{io, str};
 use std::net::SocketAddr;
+use nom::IResult;
 
 pub struct Client {
     inner: ClientService<TcpStream, LineProto>,
@@ -70,6 +71,8 @@ pub struct LineCodec;
 /// Protocol definition
 struct LineProto;
 
+named!(abcd_parser, tag!("abcd"));
+
 /// Implementation of the simple line-based protocol.
 ///
 /// Frames consist of a UTF-8 encoded string, terminated by a '\n' character.
@@ -78,6 +81,14 @@ impl Codec for LineCodec {
     type Out = String;
 
     fn decode(&mut self, buf: &mut EasyBuf) -> Result<Option<String>, io::Error> {
+        match abcd_parser(buf.as_slice()) {
+		IResult::Done(_, _) => {
+			println!("Done")
+		},
+		IResult::Error(_) => println!("Error"),
+		IResult::Incomplete(_) => println!("Incomplete")
+	};
+        
         // Check to see if the frame contains a new line
         if let Some(n) = buf.as_ref().iter().position(|b| *b == b'\n') {
             // remove the serialized frame from the buffer.
@@ -165,6 +176,7 @@ mod tests {
     
     	// This brings up our server.
     	let addr = "127.0.0.1:12345".parse().unwrap();
+	println!("Hello!");
     
     	let handle = core.handle();
     
