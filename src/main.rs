@@ -1,15 +1,11 @@
-//#![deny(warnings)]
 extern crate futures;
 extern crate hyper;
-//#[macro_use]
-//extern crate log;
 
 use hyper::{Get, Post, StatusCode};
 use hyper::header::ContentLength;
 use hyper::server::{Server, Service, Request, Response};
 
-
-static INDEX: &'static [u8] = b"Try POST /echo";
+static INDEX: &'static [u8] = b"<!DOCTYPE html>\r\n<html><head><title>appengine-rust</title></head><body><h1>Google App Engine custom runtime for Rust</h1><p>Try POST /echo</p></body></html>";
 
 #[derive(Clone, Copy)]
 struct Echo;
@@ -40,7 +36,6 @@ impl Service for Echo {
             }
         })
     }
-
 }
 
 
