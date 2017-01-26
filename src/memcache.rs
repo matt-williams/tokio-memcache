@@ -589,36 +589,49 @@ pub fn serve<T>(addr: SocketAddr, new_service: T)
     TcpServer::new(MemcacheProto, addr).serve(new_service);
 }
 
-pub struct Logger<T> {
-    inner: T,
+pub struct Logger<S> {
+    inner: S,
 }
 
-impl<T> Logger<T> {
-    pub fn new(inner: T) -> Logger<T> {
+impl<S> Logger<S> {
+    pub fn new(inner: S) -> Logger<S> {
         Logger{inner: inner}
     }
 }
 
-// impl<T> Service for Logger<T> 
-//    where T: Service<Request = (Debug + Sized + 'static), Response = (Debug + Sized + 'static), Error = (Debug + Sized + 'static)>,
-//          T::Future: Sized + 'static {
-//    type Request = T::Request;
-//    type Response = T::Response;
-//    type Error = T::Error;
-//    type Future = T::Future;
-//
-//    fn call(&self, req: Request) -> Self::Future {
-//        println!(">> {:?}", req);
-//        self.inner.call(req)
-//    }
-//}
+impl<S> Service for Logger<S>
+    where S: Service,
+          <S as Service>::Request: Debug,
+          <S as Service>::Response: Debug,
+          <S as Service>::Error: Debug
+{
+    type Request = S::Request;
+    type Response = S::Response;
+    type Error = S::Error;
+    type Future = futures::MapErr<futures::Map<S::Future, fn(S::Response) -> S::Response>, fn(S::Error) -> S::Error>;
+
+    fn call(&self, request: Self::Request) -> Self::Future {
+        println!(">> {:?}", request);
+        fn log<T: Debug>(response: T) -> T {
+            println!("<< {:?}", response);
+            response
+        }
+        fn log_err<T: Debug>(error: T) -> T {
+            println!("!! {:?}", error);
+            error
+        }
+        self.inner.call(request)
+            .map(log::<Self::Response> as fn(Self::Response) -> Self::Response)
+            .map_err(log_err::<Self::Error> as fn(Self::Error) -> Self::Error)
+    }
+}
 
 #[cfg(test)]
 mod tests {
     use memcache::tokio_core::reactor::Core;
     use memcache::tokio_service::Service;
     use memcache::futures::Future;
-    use memcache::{Message, Request, Response, Value};
+    use memcache::{Message, Request, Response, Value, Logger};
     use memcache::service_fn::service_fn;
     use std::thread;
     use std::time::Duration;
@@ -632,8 +645,7 @@ mod tests {
         thread::spawn(move || {
             // Use our `serve` fn
             ::memcache::serve(addr, || {
-                Ok(service_fn(|msg| {
-                    println!("SERVER: {:?}", msg);
+                Ok(Logger::new(service_fn(|msg| {
                     match msg {
                         Message::Req(Request::Get{keys}) =>
                             Ok(Message::Rsp(Response::Values(keys.iter().map(|key| Value{key: key.clone(), value: (key.clone() + "'s value").as_bytes().to_vec(), flags: 0, cas: None}).collect()))), // TODO Do I really need to clone key here?
@@ -645,7 +657,7 @@ mod tests {
                             Ok(Message::Rsp(Response::Stored)),
                         _ => Ok(Message::Rsp(Response::Error)),
                     }
-                }))
+                })))
             })
         });
 
@@ -656,13 +668,12 @@ mod tests {
         core.run(
             ::memcache::Client::connect(&addr, &handle)
             .and_then(|client| {
+               let client = Logger::new(client);
                client.call(Message::Req(Request::Gets{keys: vec![String::from("abcd"), String::from("ebgh")]}))
-               .and_then(move |response| {
-                   println!("CLIENT: {:?}", response);
+               .and_then(move |_| {
                    client.call(Message::Req(Request::Cas{key: String::from("abcd"), value: b"blah".to_vec(), flags: 0, expiry: 0, cas: 7, noreply: false}))
                    })
-               .and_then(|response| {
-                   println!("CLIENT: {:?}", response);
+               .and_then(|_| {
                    Ok(())
                    })
             })).unwrap();
