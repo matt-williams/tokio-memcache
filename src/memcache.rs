@@ -4,7 +4,8 @@ extern crate tokio_proto;
 extern crate tokio_service;
 extern crate service_fn;
 
-use self::futures::Future;
+use self::futures::{Future, Then, future};
+use self::futures::future::FutureResult;
 use self::tokio_core::io::{Io, Codec, EasyBuf, Framed};
 use self::tokio_core::net::TcpStream;
 use self::tokio_core::reactor::Handle;
@@ -453,7 +454,7 @@ impl Response {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct Value {
     key: String,
     value: Vec<u8>,
@@ -562,13 +563,45 @@ pub struct Client {
 
 impl Client {
     pub fn connect(addr: &SocketAddr, handle: &Handle) -> Box<Future<Item = Client, Error = io::Error>> {
-        let ret = TcpClient::new(MemcacheProto)
-            .connect(addr, handle)
-            .map(|client_service| {
-                Client{inner: client_service}
-            });
+        Box::new(
+            TcpClient::new(MemcacheProto)
+                .connect(addr, handle)
+                .map(|client_service| {
+                    Client{inner: client_service}
+                }))
+    }
+}
 
-        Box::new(ret)
+pub trait MemcacheClient<F: Future<Item = Message, Error = io::Error> + Sized> {
+    fn get(&self, key: String) -> Then<F, FutureResult<Value, io::Error>, fn(Result<Message, io::Error>) -> FutureResult<Value, io::Error>>;
+    fn set(&self, key: String, value: Vec<u8>, flags: u16, expiry: u32) -> Then<F, FutureResult<(), io::Error>, fn(Result<Message, io::Error>) -> FutureResult<(), io::Error>>;
+}
+
+impl<F: Future<Item = Message, Error = io::Error> + Sized> MemcacheClient<F> for Service<Request = Message, Response = Message, Future = F, Error = io::Error> {
+    fn get(&self, key: String) -> Then<F, FutureResult<Value, io::Error>, fn(Result<Message, io::Error>) -> FutureResult<Value, io::Error>> {
+        fn map_result(result: Result<Message, io::Error>) -> FutureResult<Value, io::Error> {
+            future::result(
+                match result {
+                    Ok(Message::Rsp(Response::Values(values))) => Ok(values[0].clone()),
+                    _ => Err(io::Error::new(io::ErrorKind::Other, "eek"))
+                }
+            )
+        }
+        self.call(Message::Req(Request::Gets{keys: vec![key]}))
+            .then(map_result)
+    }
+
+    fn set(&self, key: String, value: Vec<u8>, flags: u16, expiry: u32) -> Then<F, FutureResult<(), io::Error>, fn(Result<Message, io::Error>) -> FutureResult<(), io::Error>> {
+        fn map_result(result: Result<Message, io::Error>) -> FutureResult<(), io::Error> {
+            future::result(
+                match result {
+                    Ok(Message::Rsp(Response::Stored)) => Ok(()),
+                    _ => Err(io::Error::new(io::ErrorKind::Other, "eek"))
+                }
+            )
+        }
+        self.call(Message::Req(Request::Set{key: key, value: value, flags: flags, expiry: expiry, noreply: false}))
+            .then(map_result)
     }
 }
 
@@ -589,52 +622,50 @@ pub fn serve<T>(addr: SocketAddr, new_service: T)
     TcpServer::new(MemcacheProto, addr).serve(new_service);
 }
 
-pub struct Logger<S> {
-    inner: S,
+pub struct Logger<T> {
+    inner: T,
 }
 
-impl<S> Logger<S> {
-    pub fn new(inner: S) -> Logger<S> {
+impl<T> Logger<T> {
+    pub fn new(inner: T) -> Logger<T> {
         Logger{inner: inner}
     }
 }
 
-impl<S> Service for Logger<S>
-    where S: Service,
-          <S as Service>::Request: Debug,
-          <S as Service>::Response: Debug,
-          <S as Service>::Error: Debug
+impl<T> Service for Logger<T>
+    where T: Service,
+          <T as Service>::Request: Debug,
+          <T as Service>::Response: Debug,
+          <T as Service>::Error: Debug
 {
-    type Request = S::Request;
-    type Response = S::Response;
-    type Error = S::Error;
-    type Future = futures::MapErr<futures::Map<S::Future, fn(S::Response) -> S::Response>, fn(S::Error) -> S::Error>;
+    type Request = T::Request;
+    type Response = T::Response;
+    type Error = T::Error;
+    type Future = Then<T::Future, FutureResult<T::Response, T::Error>, fn(Result<T::Response, T::Error>) -> FutureResult<Self::Response, Self::Error>>;
 
     fn call(&self, request: Self::Request) -> Self::Future {
         println!(">> {:?}", request);
-        fn log<T: Debug>(response: T) -> T {
-            println!("<< {:?}", response);
-            response
-        }
-        fn log_err<T: Debug>(error: T) -> T {
-            println!("!! {:?}", error);
-            error
+        fn log<R: Debug, E: Debug>(result: Result<R, E>) -> FutureResult<R, E> {
+            match result {
+                Ok(ref response) => println!("<< {:?}", response),
+                Err(ref error) => println!("!! {:?}", error),
+            }
+            future::result(result)
         }
         self.inner.call(request)
-            .map(log::<Self::Response> as fn(Self::Response) -> Self::Response)
-            .map_err(log_err::<Self::Error> as fn(Self::Error) -> Self::Error)
+            .then(log::<Self::Response, Self::Error> as fn(Result<Self::Response, Self::Error>) -> FutureResult<Self::Response, Self::Error>)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use memcache::tokio_core::reactor::Core;
-    use memcache::tokio_service::Service;
     use memcache::futures::Future;
-    use memcache::{Message, Request, Response, Value, Logger};
+    use memcache::{Message, Request, Response, Value, Logger, MemcacheClient};
     use memcache::service_fn::service_fn;
     use std::thread;
     use std::time::Duration;
+    use std::io;
 
     #[test]
     pub fn it_works() {
@@ -668,10 +699,11 @@ mod tests {
         core.run(
             ::memcache::Client::connect(&addr, &handle)
             .and_then(|client| {
-               let client = Logger::new(client);
-               client.call(Message::Req(Request::Gets{keys: vec![String::from("abcd"), String::from("ebgh")]}))
-               .and_then(move |_| {
-                   client.call(Message::Req(Request::Cas{key: String::from("abcd"), value: b"blah".to_vec(), flags: 0, expiry: 0, cas: 7, noreply: false}))
+//               let client = Logger::new(client);
+               (client as MemcacheClient<Box<Future<Item = Message, Error = io::Error>>>).get(String::from("abcd"))
+               .and_then(move |value| {
+                   println!("{:?}", value);
+                   client.set(String::from("abcd"), b"blah".to_vec(), 0, 0)
                    })
                .and_then(|_| {
                    Ok(())
