@@ -4,7 +4,7 @@ version = "0.1.0"
 authors = ["Matt Williams <matwilliams@hotmail.com>"]
 
 [dependencies]
-hyper = { git = "https://github.com/hyperium/hyper.git", branch = "tokio" }
+hyper = { git = "https://github.com/hyperium/hyper.git", branch = "master" }
 futures = "0.1.7"
 tokio-core = "0.1"
 tokio-proto = "0.1"

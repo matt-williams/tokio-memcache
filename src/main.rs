@@ -5,7 +5,7 @@ extern crate nom;
 
 use hyper::{Get, Post, StatusCode};
 use hyper::header::ContentLength;
-use hyper::server::{Server, Service, Request, Response};
+use hyper::server::{Http, Service, Request, Response};
 
 static INDEX: &'static [u8] = br"<!DOCTYPE html>
 <html>
@@ -29,19 +29,19 @@ impl Service for Echo {
 
     fn call(&self, req: Request) -> Self::Future {
         ::futures::finished(match (req.method(), req.path()) {
-            (&Get, Some("/")) | (&Get, Some("/echo")) => {
+            (&Get, "/") | (&Get, "/echo") => {
                 Response::new()
                     .with_header(ContentLength(INDEX.len() as u64))
                     .with_body(INDEX)
             },
-            (&Post, Some("/echo")) => {
+            (&Post, "/echo") => {
                 let mut res = Response::new();
                 if let Some(len) = req.headers().get::<ContentLength>() {
                     res.headers_mut().set(len.clone());
                 }
                 res.with_body(req.body())
             },
-            (&Get, Some("/_ah/health")) => {
+            (&Get, "/_ah/health") => {
                 Response::new()
             },
             _ => {
@@ -52,13 +52,9 @@ impl Service for Echo {
     }
 }
 
-
 fn main() {
     let addr = "0.0.0.0:8080".parse().unwrap();
-    let (listening, server) = Server::standalone(|tokio| {
-        Server::http(&addr, tokio)?
-            .handle(|| Ok(Echo), tokio)
-    }).unwrap();
-    println!("Listening on http://{}", listening);
-    server.run();
+    let server = Http::new().bind(&addr, || Ok(Echo)).unwrap();
+    println!("Listening on http://{}", server.local_addr().unwrap());
+    server.run().unwrap();
 }
