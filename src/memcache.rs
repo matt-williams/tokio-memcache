@@ -572,72 +572,129 @@ impl Client {
     }
 }
 
-pub trait MemcacheAPI<F: Future<Item = Message, Error = io::Error> + Sized> {
-    fn set(&self, key: String, value: Vec<u8>, flags: u16, expiry: u32) -> Then<F, FutureResult<(), io::Error>, fn(Result<Message, io::Error>) -> FutureResult<(), io::Error>>;
-//    fn add(&self, key: String, value: Vec<u8>, flags: u16, expiry: u32) -> Then<F, FutureResult<(), io::Error>, fn(Result<Message, io::Error>) -> FutureResult<(), io::Error>>;
-//    fn replace(&self, key: String, value: Vec<u8>, flags: u16, expiry: u32) -> Then<F, FutureResult<(), io::Error>, fn(Result<Message, io::Error>) -> FutureResult<(), io::Error>>;
-//    fn append(&self, key: String, value: Vec<u8>) -> Then<F, FutureResult<(), io::Error>, fn(Result<Message, io::Error>) -> FutureResult<(), io::Error>>;
-//    fn prepend(&self, key: String, value: Vec<u8>) -> Then<F, FutureResult<(), io::Error>, fn(Result<Message, io::Error>) -> FutureResult<(), io::Error>>;
-//    fn cas(&self, key: String, value: Vec<u8>, flags: u16, expiry: u32, cas: u64) -> Then<F, FutureResult<(), io::Error>, fn(Result<Message, io::Error>) -> FutureResult<(), io::Error>>;
-    fn get(&self, key: String) -> Then<F, FutureResult<Value, io::Error>, fn(Result<Message, io::Error>) -> FutureResult<Value, io::Error>>;
-    fn gets(&self, key: String) -> Then<F, FutureResult<Value, io::Error>, fn(Result<Message, io::Error>) -> FutureResult<Value, io::Error>>;
-//    fn delete(&self, key: String) -> Then<F, FutureResult<(), io::Error>, fn(Result<Message, io::Error>) -> FutureResult<(), io::Error>>;
-//    fn incr(&self, key: String, value: u64) -> Then<F, FutureResult<(), io::Error>, fn(Result<Message, io::Error>) -> FutureResult<u64, io::Error>>;
-//    fn decr(&self, key: String, value: u64) -> Then<F, FutureResult<(), io::Error>, fn(Result<Message, io::Error>) -> FutureResult<u64, io::Error>>;
-//    fn touch(&self, key: String, expiry: u32) -> Then<F, FutureResult<(), io::Error>, fn(Result<Message, io::Error>) -> FutureResult<(), io::Error>>;
-//    fn flush_all(&self, delay: u32) -> Then<F, FutureResult<(), io::Error>, fn(Result<Message, io::Error>) -> FutureResult<(), io::Error>>;
-    fn version(&self) -> Then<F, FutureResult<String, io::Error>, fn(Result<Message, io::Error>) -> FutureResult<String, io::Error>>;
+pub trait Api {
+    type FutureUnit: Future<Item = (), Error =io::Error> + Sized;
+    type FutureValue: Future<Item = Value, Error =io::Error> + Sized;
+    type FutureU64: Future<Item = u64, Error =io::Error> + Sized;
+    type FutureString: Future<Item = String, Error =io::Error> + Sized;
+
+    fn set(&self, key: String, value: Vec<u8>, flags: u16, expiry: u32) -> Self::FutureUnit;
+    fn add(&self, key: String, value: Vec<u8>, flags: u16, expiry: u32) -> Self::FutureUnit;
+    fn replace(&self, key: String, value: Vec<u8>, flags: u16, expiry: u32) -> Self::FutureUnit;
+    fn append(&self, key: String, value: Vec<u8>) -> Self::FutureUnit;
+    fn prepend(&self, key: String, value: Vec<u8>) -> Self::FutureUnit;
+    fn cas(&self, key: String, value: Vec<u8>, flags: u16, expiry: u32, cas: u64) -> Self::FutureUnit;
+    fn get(&self, key: String) -> Self::FutureValue;
+    fn gets(&self, key: String) -> Self::FutureValue;
+//    fn delete(&self, key: String) -> Self::FutureUnit;
+//    fn incr(&self, key: String, value: u64) -> Self::FutureU64;
+//    fn decr(&self, key: String, value: u64) -> Self::FutureU64;
+//    fn touch(&self, key: String, expiry: u32) -> Self::FutureUnit;
+//    fn flush_all(&self, delay: u32) -> Self::FutureUnit;
+    fn version(&self) -> Self::FutureString;
 }
 
-impl<T: Service<Request = Message, Response = Message, Error = io::Error>> MemcacheAPI<T::Future> for T
+impl<T: Service<Request = Message, Response = Message, Error = io::Error>> Api for T
     where T::Future: Future<Item = Message, Error = io::Error> + Sized {
-    fn set(&self, key: String, value: Vec<u8>, flags: u16, expiry: u32) -> Then<T::Future, FutureResult<(), io::Error>, fn(Result<Message, io::Error>) -> FutureResult<(), io::Error>> {
+    type FutureUnit = Then<T::Future, FutureResult<(), io::Error>, fn(Result<Message, io::Error>) -> FutureResult<(), io::Error>>;
+    type FutureValue = Then<T::Future, FutureResult<Value, io::Error>, fn(Result<Message, io::Error>) -> FutureResult<Value, io::Error>>;
+    type FutureU64 = Then<T::Future, FutureResult<u64, io::Error>, fn(Result<Message, io::Error>) -> FutureResult<u64, io::Error>>;
+    type FutureString = Then<T::Future, FutureResult<String, io::Error>, fn(Result<Message, io::Error>) -> FutureResult<String, io::Error>>;
+
+    fn set(&self, key: String, value: Vec<u8>, flags: u16, expiry: u32) -> Self::FutureUnit {
         fn map_result(result: Result<Message, io::Error>) -> FutureResult<(), io::Error> {
-            future::result(
-                match result {
-                    Ok(Message::Rsp(Response::Stored)) => Ok(()),
-                    _ => Err(io::Error::new(io::ErrorKind::Other, "eek"))
-                }
-            )
+            future::result(match result {
+                Ok(Message::Rsp(Response::Stored)) => Ok(()),
+                _ => Err(io::Error::new(io::ErrorKind::Other, "eek"))
+            })
         }
         self.call(Message::Req(Request::Set{key: key, value: value, flags: flags, expiry: expiry, noreply: false}))
             .then(map_result)
     }
 
-    fn get(&self, key: String) -> Then<T::Future, FutureResult<Value, io::Error>, fn(Result<Message, io::Error>) -> FutureResult<Value, io::Error>> {
+    fn add(&self, key: String, value: Vec<u8>, flags: u16, expiry: u32) -> Self::FutureUnit {
+        fn map_result(result: Result<Message, io::Error>) -> FutureResult<(), io::Error> {
+            future::result(match result {
+                Ok(Message::Rsp(Response::Stored)) => Ok(()),
+                _ => Err(io::Error::new(io::ErrorKind::Other, "eek"))
+            })
+        }
+        self.call(Message::Req(Request::Add{key: key, value: value, flags: flags, expiry: expiry, noreply: false}))
+            .then(map_result)
+    }
+
+    fn replace(&self, key: String, value: Vec<u8>, flags: u16, expiry: u32) -> Self::FutureUnit {
+        fn map_result(result: Result<Message, io::Error>) -> FutureResult<(), io::Error> {
+            future::result(match result {
+                Ok(Message::Rsp(Response::Stored)) => Ok(()),
+                _ => Err(io::Error::new(io::ErrorKind::Other, "eek"))
+            })
+        }
+        self.call(Message::Req(Request::Replace{key: key, value: value, flags: flags, expiry: expiry, noreply: false}))
+            .then(map_result)
+    }
+
+    fn append(&self, key: String, value: Vec<u8>) -> Self::FutureUnit {
+        fn map_result(result: Result<Message, io::Error>) -> FutureResult<(), io::Error> {
+            future::result(match result {
+                Ok(Message::Rsp(Response::Stored)) => Ok(()),
+                _ => Err(io::Error::new(io::ErrorKind::Other, "eek"))
+            })
+        }
+        self.call(Message::Req(Request::Append{key: key, value: value, noreply: false}))
+            .then(map_result)
+    }
+
+    fn prepend(&self, key: String, value: Vec<u8>) -> Self::FutureUnit {
+        fn map_result(result: Result<Message, io::Error>) -> FutureResult<(), io::Error> {
+            future::result(match result {
+                Ok(Message::Rsp(Response::Stored)) => Ok(()),
+                _ => Err(io::Error::new(io::ErrorKind::Other, "eek"))
+            })
+        }
+        self.call(Message::Req(Request::Prepend{key: key, value: value, noreply: false}))
+            .then(map_result)
+    }
+
+    fn cas(&self, key: String, value: Vec<u8>, flags: u16, expiry: u32, cas: u64) -> Self::FutureUnit {
+        fn map_result(result: Result<Message, io::Error>) -> FutureResult<(), io::Error> {
+            future::result(match result {
+                Ok(Message::Rsp(Response::Stored)) => Ok(()),
+                _ => Err(io::Error::new(io::ErrorKind::Other, "eek"))
+            })
+        }
+        self.call(Message::Req(Request::Cas{key: key, value: value, flags: flags, expiry: expiry, cas: cas, noreply: false}))
+            .then(map_result)
+    }
+
+    fn get(&self, key: String) -> Self::FutureValue {
         fn map_result(result: Result<Message, io::Error>) -> FutureResult<Value, io::Error> {
-            future::result(
-                match result {
-                    Ok(Message::Rsp(Response::Values(values))) => Ok(values[0].clone()),
-                    _ => Err(io::Error::new(io::ErrorKind::Other, "eek"))
-                }
-            )
+            future::result(match result {
+                Ok(Message::Rsp(Response::Values(values))) => Ok(values[0].clone()),
+                _ => Err(io::Error::new(io::ErrorKind::Other, "eek"))
+            })
         }
         self.call(Message::Req(Request::Get{keys: vec![key]}))
             .then(map_result)
     }
 
-    fn gets(&self, key: String) -> Then<T::Future, FutureResult<Value, io::Error>, fn(Result<Message, io::Error>) -> FutureResult<Value, io::Error>> {
+    fn gets(&self, key: String) -> Self::FutureValue {
         fn map_result(result: Result<Message, io::Error>) -> FutureResult<Value, io::Error> {
-            future::result(
-                match result {
-                    Ok(Message::Rsp(Response::Values(values))) => Ok(values[0].clone()),
-                    _ => Err(io::Error::new(io::ErrorKind::Other, "eek"))
-                }
-            )
+            future::result(match result {
+                Ok(Message::Rsp(Response::Values(values))) => Ok(values[0].clone()),
+                _ => Err(io::Error::new(io::ErrorKind::Other, "eek"))
+            })
         }
         self.call(Message::Req(Request::Gets{keys: vec![key]}))
             .then(map_result)
     }
 
-    fn version(&self) -> Then<T::Future, FutureResult<String, io::Error>, fn(Result<Message, io::Error>) -> FutureResult<String, io::Error>> {
+    fn version(&self) -> Self::FutureString {
         fn map_result(result: Result<Message, io::Error>) -> FutureResult<String, io::Error> {
-            future::result(
-                match result {
-                    Ok(Message::Rsp(Response::Version(version))) => Ok(version),
-                    _ => Err(io::Error::new(io::ErrorKind::Other, "eek"))
-                }
-            )
+            future::result(match result {
+                Ok(Message::Rsp(Response::Version(version))) => Ok(version),
+                _ => Err(io::Error::new(io::ErrorKind::Other, "eek"))
+            })
         }
         self.call(Message::Req(Request::Version))
             .then(map_result)
@@ -700,7 +757,7 @@ impl<T> Service for Logger<T>
 mod tests {
     use memcache::tokio_core::reactor::Core;
     use memcache::futures::Future;
-    use memcache::{Message, Request, Response, Value, Logger, MemcacheAPI};
+    use memcache::{Message, Request, Response, Value, Logger, Api};
     use memcache::service_fn::service_fn;
     use std::thread;
     use std::time::Duration;
