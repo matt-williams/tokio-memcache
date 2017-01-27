@@ -158,7 +158,7 @@ impl Request {
                     key: map_res!(take_while!(is_key_char), |x: &[u8]| String::from_utf8(x.to_vec())),
                     || key)) ~
                 tag!("\r\n"),
-                || Request::Get{keys: keys}) |
+                || Request::Gets{keys: keys}) |
             chain!(
                 tag!("delete ") ~
                 key: map_res!(take_while!(is_key_char), |x: &[u8]| String::from_utf8(x.to_vec())) ~
@@ -361,7 +361,7 @@ impl Request {
                 }
                 buf.extend_from_slice(b"\r\n");
             },
-            Request::Version => buf.extend_from_slice(b"VERSION\r\n")
+            Request::Version => buf.extend_from_slice(b"version\r\n")
         }
     }
 }
@@ -572,13 +572,39 @@ impl Client {
     }
 }
 
-pub trait MemcacheClient<F: Future<Item = Message, Error = io::Error> + Sized> {
-    fn get(&self, key: String) -> Then<F, FutureResult<Value, io::Error>, fn(Result<Message, io::Error>) -> FutureResult<Value, io::Error>>;
+pub trait MemcacheAPI<F: Future<Item = Message, Error = io::Error> + Sized> {
     fn set(&self, key: String, value: Vec<u8>, flags: u16, expiry: u32) -> Then<F, FutureResult<(), io::Error>, fn(Result<Message, io::Error>) -> FutureResult<(), io::Error>>;
+//    fn add(&self, key: String, value: Vec<u8>, flags: u16, expiry: u32) -> Then<F, FutureResult<(), io::Error>, fn(Result<Message, io::Error>) -> FutureResult<(), io::Error>>;
+//    fn replace(&self, key: String, value: Vec<u8>, flags: u16, expiry: u32) -> Then<F, FutureResult<(), io::Error>, fn(Result<Message, io::Error>) -> FutureResult<(), io::Error>>;
+//    fn append(&self, key: String, value: Vec<u8>) -> Then<F, FutureResult<(), io::Error>, fn(Result<Message, io::Error>) -> FutureResult<(), io::Error>>;
+//    fn prepend(&self, key: String, value: Vec<u8>) -> Then<F, FutureResult<(), io::Error>, fn(Result<Message, io::Error>) -> FutureResult<(), io::Error>>;
+//    fn cas(&self, key: String, value: Vec<u8>, flags: u16, expiry: u32, cas: u64) -> Then<F, FutureResult<(), io::Error>, fn(Result<Message, io::Error>) -> FutureResult<(), io::Error>>;
+    fn get(&self, key: String) -> Then<F, FutureResult<Value, io::Error>, fn(Result<Message, io::Error>) -> FutureResult<Value, io::Error>>;
+    fn gets(&self, key: String) -> Then<F, FutureResult<Value, io::Error>, fn(Result<Message, io::Error>) -> FutureResult<Value, io::Error>>;
+//    fn delete(&self, key: String) -> Then<F, FutureResult<(), io::Error>, fn(Result<Message, io::Error>) -> FutureResult<(), io::Error>>;
+//    fn incr(&self, key: String, value: u64) -> Then<F, FutureResult<(), io::Error>, fn(Result<Message, io::Error>) -> FutureResult<u64, io::Error>>;
+//    fn decr(&self, key: String, value: u64) -> Then<F, FutureResult<(), io::Error>, fn(Result<Message, io::Error>) -> FutureResult<u64, io::Error>>;
+//    fn touch(&self, key: String, expiry: u32) -> Then<F, FutureResult<(), io::Error>, fn(Result<Message, io::Error>) -> FutureResult<(), io::Error>>;
+//    fn flush_all(&self, delay: u32) -> Then<F, FutureResult<(), io::Error>, fn(Result<Message, io::Error>) -> FutureResult<(), io::Error>>;
+    fn version(&self) -> Then<F, FutureResult<String, io::Error>, fn(Result<Message, io::Error>) -> FutureResult<String, io::Error>>;
 }
 
-impl<F: Future<Item = Message, Error = io::Error> + Sized> MemcacheClient<F> for Service<Request = Message, Response = Message, Future = F, Error = io::Error> {
-    fn get(&self, key: String) -> Then<F, FutureResult<Value, io::Error>, fn(Result<Message, io::Error>) -> FutureResult<Value, io::Error>> {
+impl<T: Service<Request = Message, Response = Message, Error = io::Error>> MemcacheAPI<T::Future> for T
+    where T::Future: Future<Item = Message, Error = io::Error> + Sized {
+    fn get(&self, key: String) -> Then<T::Future, FutureResult<Value, io::Error>, fn(Result<Message, io::Error>) -> FutureResult<Value, io::Error>> {
+        fn map_result(result: Result<Message, io::Error>) -> FutureResult<Value, io::Error> {
+            future::result(
+                match result {
+                    Ok(Message::Rsp(Response::Values(values))) => Ok(values[0].clone()),
+                    _ => Err(io::Error::new(io::ErrorKind::Other, "eek"))
+                }
+            )
+        }
+        self.call(Message::Req(Request::Get{keys: vec![key]}))
+            .then(map_result)
+    }
+
+    fn gets(&self, key: String) -> Then<T::Future, FutureResult<Value, io::Error>, fn(Result<Message, io::Error>) -> FutureResult<Value, io::Error>> {
         fn map_result(result: Result<Message, io::Error>) -> FutureResult<Value, io::Error> {
             future::result(
                 match result {
@@ -591,7 +617,7 @@ impl<F: Future<Item = Message, Error = io::Error> + Sized> MemcacheClient<F> for
             .then(map_result)
     }
 
-    fn set(&self, key: String, value: Vec<u8>, flags: u16, expiry: u32) -> Then<F, FutureResult<(), io::Error>, fn(Result<Message, io::Error>) -> FutureResult<(), io::Error>> {
+    fn set(&self, key: String, value: Vec<u8>, flags: u16, expiry: u32) -> Then<T::Future, FutureResult<(), io::Error>, fn(Result<Message, io::Error>) -> FutureResult<(), io::Error>> {
         fn map_result(result: Result<Message, io::Error>) -> FutureResult<(), io::Error> {
             future::result(
                 match result {
@@ -601,6 +627,19 @@ impl<F: Future<Item = Message, Error = io::Error> + Sized> MemcacheClient<F> for
             )
         }
         self.call(Message::Req(Request::Set{key: key, value: value, flags: flags, expiry: expiry, noreply: false}))
+            .then(map_result)
+    }
+
+    fn version(&self) -> Then<T::Future, FutureResult<String, io::Error>, fn(Result<Message, io::Error>) -> FutureResult<String, io::Error>> {
+        fn map_result(result: Result<Message, io::Error>) -> FutureResult<String, io::Error> {
+            future::result(
+                match result {
+                    Ok(Message::Rsp(Response::Version(version))) => Ok(version),
+                    _ => Err(io::Error::new(io::ErrorKind::Other, "eek"))
+                }
+            )
+        }
+        self.call(Message::Req(Request::Version))
             .then(map_result)
     }
 }
@@ -661,11 +700,10 @@ impl<T> Service for Logger<T>
 mod tests {
     use memcache::tokio_core::reactor::Core;
     use memcache::futures::Future;
-    use memcache::{Message, Request, Response, Value, Logger, MemcacheClient};
+    use memcache::{Message, Request, Response, Value, Logger, MemcacheAPI};
     use memcache::service_fn::service_fn;
     use std::thread;
     use std::time::Duration;
-    use std::io;
 
     #[test]
     pub fn it_works() {
@@ -681,11 +719,13 @@ mod tests {
                         Message::Req(Request::Get{keys}) =>
                             Ok(Message::Rsp(Response::Values(keys.iter().map(|key| Value{key: key.clone(), value: (key.clone() + "'s value").as_bytes().to_vec(), flags: 0, cas: None}).collect()))), // TODO Do I really need to clone key here?
                         Message::Req(Request::Gets{keys}) =>
-                            Ok(Message::Rsp(Response::Values(keys.iter().map(|key| Value{key: key.clone(), value: (key.clone() + "'s value").as_bytes().to_vec(), flags: 0, cas: None}).collect()))), // TODO Do I really need to clone key here?
+                            Ok(Message::Rsp(Response::Values(keys.iter().map(|key| Value{key: key.clone(), value: (key.clone() + "'s value").as_bytes().to_vec(), flags: 0, cas: Some(8)}).collect()))), // TODO Do I really need to clone key here?
                         Message::Req(Request::Set{key: _, value: _, flags: _, expiry: _, noreply: _}) =>
                             Ok(Message::Rsp(Response::Stored)),
                         Message::Req(Request::Cas{key: _, value: _, flags: _, expiry: _, cas: _, noreply: _}) =>
                             Ok(Message::Rsp(Response::Stored)),
+                        Message::Req(Request::Version) =>
+                            Ok(Message::Rsp(Response::Version(String::from("1.2.3.4")))),
                         _ => Ok(Message::Rsp(Response::Error)),
                     }
                 })))
@@ -699,15 +739,19 @@ mod tests {
         core.run(
             ::memcache::Client::connect(&addr, &handle)
             .and_then(|client| {
-//               let client = Logger::new(client);
-               (client as MemcacheClient<Box<Future<Item = Message, Error = io::Error>>>).get(String::from("abcd"))
-               .and_then(move |value| {
-                   println!("{:?}", value);
-                   client.set(String::from("abcd"), b"blah".to_vec(), 0, 0)
-                   })
-               .and_then(|_| {
-                   Ok(())
-                   })
+                let client = Logger::new(client);
+                client.version()
+                .and_then(move |version| {
+                    println!("Version: {}", version);
+                    client.gets(String::from("abcd"))
+                    .and_then(move |value| {
+                        println!("{:?}", value);
+                        client.set(String::from("abcd"), b"blah".to_vec(), 0, 0)
+                        .and_then(|_| {
+                            Ok(())
+                            })
+                        })
+                })
             })).unwrap();
     }
 }
