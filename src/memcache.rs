@@ -591,6 +591,19 @@ pub trait MemcacheAPI<F: Future<Item = Message, Error = io::Error> + Sized> {
 
 impl<T: Service<Request = Message, Response = Message, Error = io::Error>> MemcacheAPI<T::Future> for T
     where T::Future: Future<Item = Message, Error = io::Error> + Sized {
+    fn set(&self, key: String, value: Vec<u8>, flags: u16, expiry: u32) -> Then<T::Future, FutureResult<(), io::Error>, fn(Result<Message, io::Error>) -> FutureResult<(), io::Error>> {
+        fn map_result(result: Result<Message, io::Error>) -> FutureResult<(), io::Error> {
+            future::result(
+                match result {
+                    Ok(Message::Rsp(Response::Stored)) => Ok(()),
+                    _ => Err(io::Error::new(io::ErrorKind::Other, "eek"))
+                }
+            )
+        }
+        self.call(Message::Req(Request::Set{key: key, value: value, flags: flags, expiry: expiry, noreply: false}))
+            .then(map_result)
+    }
+
     fn get(&self, key: String) -> Then<T::Future, FutureResult<Value, io::Error>, fn(Result<Message, io::Error>) -> FutureResult<Value, io::Error>> {
         fn map_result(result: Result<Message, io::Error>) -> FutureResult<Value, io::Error> {
             future::result(
@@ -614,19 +627,6 @@ impl<T: Service<Request = Message, Response = Message, Error = io::Error>> Memca
             )
         }
         self.call(Message::Req(Request::Gets{keys: vec![key]}))
-            .then(map_result)
-    }
-
-    fn set(&self, key: String, value: Vec<u8>, flags: u16, expiry: u32) -> Then<T::Future, FutureResult<(), io::Error>, fn(Result<Message, io::Error>) -> FutureResult<(), io::Error>> {
-        fn map_result(result: Result<Message, io::Error>) -> FutureResult<(), io::Error> {
-            future::result(
-                match result {
-                    Ok(Message::Rsp(Response::Stored)) => Ok(()),
-                    _ => Err(io::Error::new(io::ErrorKind::Other, "eek"))
-                }
-            )
-        }
-        self.call(Message::Req(Request::Set{key: key, value: value, flags: flags, expiry: expiry, noreply: false}))
             .then(map_result)
     }
 
