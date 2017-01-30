@@ -1,17 +1,18 @@
+#[macro_use]
+extern crate nom;
 extern crate futures;
 extern crate tokio_core;
 extern crate tokio_proto;
 extern crate tokio_service;
-extern crate service_fn;
 
-use self::futures::{Future, Then, Map, future};
-use self::futures::future::FutureResult;
-use self::tokio_core::io::{Io, Codec, EasyBuf, Framed};
-use self::tokio_core::net::TcpStream;
-use self::tokio_core::reactor::Handle;
-use self::tokio_proto::{TcpClient, TcpServer};
-use self::tokio_proto::pipeline::{ServerProto, ClientProto, ClientService};
-use self::tokio_service::{Service, NewService};
+use futures::{Future, Then, Map, future};
+use futures::future::FutureResult;
+use tokio_core::io::{Io, Codec, EasyBuf, Framed};
+use tokio_core::net::TcpStream;
+use tokio_core::reactor::Handle;
+use tokio_proto::{TcpClient, TcpServer};
+use tokio_proto::pipeline::{ServerProto, ClientProto, ClientService};
+use tokio_service::{Service, NewService};
 use std::{io, str};
 use std::str::FromStr;
 use std::net::SocketAddr;
@@ -1002,12 +1003,11 @@ impl<T> Service for Logger<T>
 
 #[cfg(test)]
 mod tests {
-    use memcache::tokio_core::reactor::Core;
-    use memcache::futures::{Future, future};
-    use memcache::futures::future::FutureResult;
-    use memcache::{Request, Response, Value, Logger, Api, ApiHelper, ApiService};
-    use memcache::tokio_service::{Service, NewService};
-    use memcache::service_fn::service_fn;
+    use ::tokio_core::reactor::Core;
+    use ::futures::{Future, future};
+    use ::futures::future::FutureResult;
+    use ::{Request, Response, Value, Logger, Api, ApiHelper, ApiService};
+    use ::tokio_service::{Service, NewService};
     use std::thread;
     use std::time::Duration;
 
@@ -1070,7 +1070,7 @@ mod tests {
         let addr = "127.0.0.1:11211".parse().unwrap();
     
         thread::spawn(move || {
-            ::memcache::serve(addr, || {
+            ::serve(addr, || {
                 Ok(Logger::new(ApiService::new(ApiImpl{})))
             })
         });
@@ -1080,7 +1080,7 @@ mod tests {
         let handle = core.handle();
     
         core.run(
-            ::memcache::Client::connect(&addr, &handle)
+            ::Client::connect(&addr, &handle)
             .and_then(|client| {
                 let client = Logger::new(client);
                 client.version()
