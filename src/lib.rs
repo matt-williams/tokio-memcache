@@ -437,10 +437,10 @@ impl Response {
 
 #[derive(Debug, Default, Clone)]
 pub struct Value {
-    key: String,
-    value: Vec<u8>,
-    flags: u16,
-    cas: Option<u64>,
+    pub key: String,
+    pub value: Vec<u8>,
+    pub flags: u16,
+    pub cas: Option<u64>,
 }
 
 impl Value {
