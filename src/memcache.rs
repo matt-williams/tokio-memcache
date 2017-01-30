@@ -4,7 +4,7 @@ extern crate tokio_proto;
 extern crate tokio_service;
 extern crate service_fn;
 
-use self::futures::{Future, Then, future};
+use self::futures::{Future, Then, Map, future};
 use self::futures::future::FutureResult;
 use self::tokio_core::io::{Io, Codec, EasyBuf, Framed};
 use self::tokio_core::net::TcpStream;
@@ -768,6 +768,31 @@ impl<T: Service<Request = Request, Response = Response, Error = io::Error>> Api 
     }
 }
 
+pub trait ApiHelper {
+    type FutureValue: Future<Item = Value, Error =io::Error> + Sized;
+
+    fn get_one(&self, key: String) -> Self::FutureValue;
+    fn gets_one(&self, key: String) -> Self::FutureValue;
+}
+
+impl<T: Api> ApiHelper for T {
+    type FutureValue = Map<T::FutureValues, fn(Vec<Value>) -> Value>;
+
+    fn get_one(&self, key: String) -> Self::FutureValue {
+        fn map(values: Vec<Value>) -> Value {
+            values[0].clone()
+        }
+        self.get(vec![key]).map(map)
+    }
+
+    fn gets_one(&self, key: String) -> Self::FutureValue {
+        fn map(values: Vec<Value>) -> Value {
+            values[0].clone()
+        }
+        self.gets(vec![key]).map(map)
+    }
+}
+
 impl Service for Client {
     type Request = Request;
     type Response = Response;
@@ -824,7 +849,7 @@ impl<T> Service for Logger<T>
 mod tests {
     use memcache::tokio_core::reactor::Core;
     use memcache::futures::Future;
-    use memcache::{Request, Response, Value, Logger, Api};
+    use memcache::{Request, Response, Value, Logger, Api, ApiHelper};
     use memcache::service_fn::service_fn;
     use std::thread;
     use std::time::Duration;
@@ -867,7 +892,7 @@ mod tests {
                 client.version()
                 .and_then(move |version| {
                     println!("Version: {}", version);
-                    client.gets(vec![String::from("abcd")])
+                    client.get_one(String::from("abcd"))
                     .and_then(move |value| {
                         println!("{:?}", value);
                         client.set(String::from("abcd"), b"blah".to_vec(), 0, 0)
