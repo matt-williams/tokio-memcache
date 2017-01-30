@@ -16,6 +16,7 @@ use std::{io, str};
 use std::str::FromStr;
 use std::net::SocketAddr;
 use std::fmt::Debug;
+use std::error::Error;
 use nom::{IResult, digit, not_line_ending};
 
 #[inline]
@@ -584,11 +585,11 @@ impl Client {
     }
 }
 
-pub trait Api {
-    type FutureUnit: Future<Item = (), Error =io::Error> + Sized;
-    type FutureValues: Future<Item = Vec<Value>, Error =io::Error> + Sized;
-    type FutureU64: Future<Item = u64, Error =io::Error> + Sized;
-    type FutureString: Future<Item = String, Error =io::Error> + Sized;
+pub trait Api<E> {
+    type FutureUnit: Future<Item = (), Error = E> + Sized;
+    type FutureValues: Future<Item = Vec<Value>, Error = E> + Sized;
+    type FutureU64: Future<Item = u64, Error = E> + Sized;
+    type FutureString: Future<Item = String, Error = E> + Sized;
 
     fn set(&self, key: String, value: Vec<u8>, flags: u16, expiry: u32) -> Self::FutureUnit;
     fn add(&self, key: String, value: Vec<u8>, flags: u16, expiry: u32) -> Self::FutureUnit;
@@ -606,7 +607,7 @@ pub trait Api {
     fn version(&self) -> Self::FutureString;
 }
 
-impl<T: Service<Request = Request, Response = Response, Error = io::Error>> Api for T
+impl<T: Service<Request = Request, Response = Response, Error = io::Error>> Api<io::Error> for T
     where T::Future: Future<Item = Response, Error = io::Error> + Sized {
     type FutureUnit = Then<T::Future, FutureResult<(), io::Error>, fn(Result<Response, io::Error>) -> FutureResult<(), io::Error>>;
     type FutureValues = Then<T::Future, FutureResult<Vec<Value>, io::Error>, fn(Result<Response, io::Error>) -> FutureResult<Vec<Value>, io::Error>>;
@@ -768,14 +769,15 @@ impl<T: Service<Request = Request, Response = Response, Error = io::Error>> Api 
     }
 }
 
-pub trait ApiHelper {
-    type FutureValue: Future<Item = Value, Error =io::Error> + Sized;
+pub trait ApiHelper<E> {
+    type FutureValue: Future<Item = Value, Error = E> + Sized;
 
     fn get_one(&self, key: String) -> Self::FutureValue;
     fn gets_one(&self, key: String) -> Self::FutureValue;
 }
 
-impl<T: Api> ApiHelper for T {
+impl<T, E> ApiHelper<E> for T
+    where T: Api<E> {
     type FutureValue = Map<T::FutureValues, fn(Vec<Value>) -> Value>;
 
     fn get_one(&self, key: String) -> Self::FutureValue {
@@ -801,6 +803,159 @@ impl Service for Client {
 
     fn call(&self, req: Request) -> Self::Future {
         Box::new(self.inner.call(req))
+    }
+}
+
+pub struct ApiService<T> {
+    api: T,
+}
+
+impl<T> ApiService<T> {
+    pub fn new(api: T) -> ApiService<T> {
+        ApiService{api: api}
+    }
+}
+
+impl<T> Service for ApiService<T>
+    where T: Api<io::Error>, // TODO: Genericize this over non-io errors.
+          T::FutureUnit: Send + 'static,
+          T::FutureValues: Send + 'static,
+          T::FutureU64: Send + 'static,
+          T::FutureString: Send + 'static {
+    type Request = Request;
+    type Response = Response;
+    type Error = io::Error;
+    type Future = Box<Future<Item = Response, Error = io::Error>>;
+
+    fn call(&self, req: Request) -> Self::Future {
+        match req {
+            Request::Set{key, value, flags, expiry, noreply: _} => {
+                self.api.set(key, value, flags, expiry)
+                    .then(|result| {
+                        future::done(match result {
+                            Ok(()) => Ok(Response::Stored),
+                            Err(err) => Ok(Response::ServerError(String::from(err.description()))),
+                        })
+                    }).boxed()
+            },
+            Request::Add{key, value, flags, expiry, noreply: _} => {
+                self.api.add(key, value, flags, expiry)
+                    .then(|result| {
+                        future::done(match result {
+                            Ok(()) => Ok(Response::Stored),
+                            Err(err) => Ok(Response::ServerError(String::from(err.description()))),
+                        })
+                    }).boxed()
+            },
+            Request::Replace{key, value, flags, expiry, noreply: _} => {
+                self.api.replace(key, value, flags, expiry)
+                    .then(|result| {
+                        future::done(match result {
+                            Ok(()) => Ok(Response::Stored),
+                            Err(err) => Ok(Response::ServerError(String::from(err.description()))),
+                        })
+                    }).boxed()
+            },
+            Request::Append{key, value, noreply: _} => {
+                self.api.append(key, value)
+                    .then(|result| {
+                        future::done(match result {
+                            Ok(()) => Ok(Response::Stored),
+                            Err(err) => Ok(Response::ServerError(String::from(err.description()))),
+                        })
+                    }).boxed()
+            },
+            Request::Prepend{key, value, noreply: _} => {
+                self.api.prepend(key, value)
+                    .then(|result| {
+                        future::done(match result {
+                            Ok(()) => Ok(Response::Stored),
+                            Err(err) => Ok(Response::ServerError(String::from(err.description()))),
+                        })
+                    }).boxed()
+            },
+            Request::Cas{key, value, flags, expiry, cas, noreply: _} => {
+                self.api.cas(key, value, flags, expiry, cas)
+                    .then(|result| {
+                        future::done(match result {
+                            Ok(()) => Ok(Response::Stored),
+                            Err(err) => Ok(Response::ServerError(String::from(err.description()))),
+                        })
+                    }).boxed()
+            },
+            Request::Get{keys} => {
+                self.api.get(keys)
+                    .then(|result| {
+                        future::done(match result {
+                            Ok(values) => Ok(Response::Values(values)),
+                            Err(err) => Ok(Response::ServerError(String::from(err.description()))),
+                        })
+                    }).boxed()
+            },
+            Request::Gets{keys} => {
+                self.api.gets(keys)
+                    .then(|result| {
+                        future::done(match result {
+                            Ok(values) => Ok(Response::Values(values)),
+                            Err(err) => Ok(Response::ServerError(String::from(err.description()))),
+                        })
+                    }).boxed()
+            },
+            Request::Delete{key, noreply: _} => {
+                self.api.delete(key)
+                    .then(|result| {
+                        future::done(match result {
+                            Ok(()) => Ok(Response::Deleted),
+                            Err(err) => Ok(Response::ServerError(String::from(err.description()))),
+                        })
+                    }).boxed()
+            },
+            Request::Incr{key, value, noreply: _} => {
+                self.api.incr(key, value)
+                    .then(|result| {
+                        future::done(match result {
+                            Ok(value) => Ok(Response::UpdatedValue(value)),
+                            Err(err) => Ok(Response::ServerError(String::from(err.description()))),
+                        })
+                    }).boxed()
+            },
+            Request::Decr{key, value, noreply: _} => {
+                self.api.decr(key, value)
+                    .then(|result| {
+                        future::done(match result {
+                            Ok(value) => Ok(Response::UpdatedValue(value)),
+                            Err(err) => Ok(Response::ServerError(String::from(err.description()))),
+                        })
+                    }).boxed()
+            },
+            Request::Touch{key, expiry, noreply: _} => {
+                self.api.touch(key, expiry)
+                    .then(|result| {
+                        future::done(match result {
+                            Ok(()) => Ok(Response::Stored),
+                            Err(err) => Ok(Response::ServerError(String::from(err.description()))),
+                        })
+                    }).boxed()
+            },
+            Request::FlushAll{delay, noreply: _} => {
+                self.api.flush_all(delay.unwrap_or(0))
+                    .then(|result| {
+                        future::done(match result {
+                            Ok(()) => Ok(Response::Ok),
+                            Err(err) => Ok(Response::ServerError(String::from(err.description()))),
+                        })
+                    }).boxed()
+            },
+            Request::Version => {
+                self.api.version()
+                    .then(|result| {
+                        future::done(match result {
+                            Ok(version) => Ok(Response::Version(version)),
+                            Err(err) => Ok(Response::ServerError(String::from(err.description()))),
+                        })
+                    }).boxed()
+            },
+        }
     }
 }
 
@@ -848,11 +1003,65 @@ impl<T> Service for Logger<T>
 #[cfg(test)]
 mod tests {
     use memcache::tokio_core::reactor::Core;
-    use memcache::futures::Future;
-    use memcache::{Request, Response, Value, Logger, Api, ApiHelper};
+    use memcache::futures::{Future, future};
+    use memcache::futures::future::FutureResult;
+    use memcache::{Request, Response, Value, Logger, Api, ApiHelper, ApiService};
+    use memcache::tokio_service::{Service, NewService};
     use memcache::service_fn::service_fn;
     use std::thread;
     use std::time::Duration;
+
+    pub struct ApiImpl;
+    
+    impl Api<::std::io::Error> for ApiImpl {
+        type FutureUnit = FutureResult<(), ::std::io::Error>;
+        type FutureValues = FutureResult<Vec<Value>, ::std::io::Error>;
+        type FutureU64 = FutureResult<u64, ::std::io::Error>;
+        type FutureString = FutureResult<String, ::std::io::Error>;
+
+        fn set(&self, key: String, value: Vec<u8>, flags: u16, expiry: u32) -> Self::FutureUnit {
+            future::done(Ok(()))
+        }
+        fn add(&self, key: String, value: Vec<u8>, flags: u16, expiry: u32) -> Self::FutureUnit {
+            future::done(Ok(()))
+        }
+        fn replace(&self, key: String, value: Vec<u8>, flags: u16, expiry: u32) -> Self::FutureUnit {
+            future::done(Ok(()))
+        }
+        fn append(&self, key: String, value: Vec<u8>) -> Self::FutureUnit {
+            future::done(Ok(()))
+        }
+        fn prepend(&self, key: String, value: Vec<u8>) -> Self::FutureUnit {
+            future::done(Ok(()))
+        }
+        fn cas(&self, key: String, value: Vec<u8>, flags: u16, expiry: u32, cas: u64) -> Self::FutureUnit {
+            future::done(Ok(()))
+        }
+        fn get(&self, keys: Vec<String>) -> Self::FutureValues {
+            future::done(Ok(keys.iter().map(|key| Value{key: key.clone(), value: (key.clone() + "'s value").as_bytes().to_vec(), flags: 0, cas: None}).collect()))
+        }
+        fn gets(&self, keys: Vec<String>) -> Self::FutureValues {
+            future::done(Ok(keys.iter().map(|key| Value{key: key.clone(), value: (key.clone() + "'s value").as_bytes().to_vec(), flags: 0, cas: Some(8)}).collect()))
+        }
+        fn delete(&self, key: String) -> Self::FutureUnit {
+            future::done(Ok(()))
+        }
+        fn incr(&self, key: String, value: u64) -> Self::FutureU64 {
+            future::done(Ok(4))
+        }
+        fn decr(&self, key: String, value: u64) -> Self::FutureU64 {
+            future::done(Ok(2))
+        }
+        fn touch(&self, key: String, expiry: u32) -> Self::FutureUnit {
+            future::done(Ok(()))
+        }
+        fn flush_all(&self, delay: u32) -> Self::FutureUnit {
+            future::done(Ok(()))
+        }
+        fn version(&self) -> Self::FutureString {
+            future::done(Ok(String::from("1.2.3.4")))
+        }
+    }
 
     #[test]
     pub fn it_works() {
@@ -861,23 +1070,8 @@ mod tests {
         let addr = "127.0.0.1:11211".parse().unwrap();
     
         thread::spawn(move || {
-            // Use our `serve` fn
             ::memcache::serve(addr, || {
-                Ok(Logger::new(service_fn(|req| {
-                    match req {
-                        Request::Get{keys} =>
-                            Ok(Response::Values(keys.iter().map(|key| Value{key: key.clone(), value: (key.clone() + "'s value").as_bytes().to_vec(), flags: 0, cas: None}).collect())), // TODO Do I really need to clone key here?
-                        Request::Gets{keys} =>
-                            Ok(Response::Values(keys.iter().map(|key| Value{key: key.clone(), value: (key.clone() + "'s value").as_bytes().to_vec(), flags: 0, cas: Some(8)}).collect())), // TODO Do I really need to clone key here?
-                        Request::Set{key: _, value: _, flags: _, expiry: _, noreply: _} =>
-                            Ok(Response::Stored),
-                        Request::Cas{key: _, value: _, flags: _, expiry: _, cas: _, noreply: _} =>
-                            Ok(Response::Stored),
-                        Request::Version =>
-                            Ok(Response::Version(String::from("1.2.3.4"))),
-                        _ => Ok(Response::Error),
-                    }
-                })))
+                Ok(Logger::new(ApiService::new(ApiImpl{})))
             })
         });
 
