@@ -49,3 +49,15 @@ impl Value {
         buf.extend_from_slice(b"\r\n");
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use ::value::Value;
+
+    #[test]
+    fn build() {
+        let mut buf = Vec::new();
+        Value{key: String::from("key"), value: b"value".to_vec(), flags: 1, cas: Some(1)}.build(&mut buf);
+        assert_eq!(b"VALUE key 1 5 1\r\nvalue\r\n", buf.as_slice());
+    }
+}
