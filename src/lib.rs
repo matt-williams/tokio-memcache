@@ -1,9 +1,10 @@
 #[macro_use]
-extern crate nom;
 extern crate futures;
 extern crate tokio_core;
 extern crate tokio_proto;
 extern crate tokio_service;
+extern crate nom;
+extern crate byteorder;
 
 mod parse_utils;
 mod request;

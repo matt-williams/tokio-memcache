@@ -1,8 +1,12 @@
 use std::str;
 use std::str::FromStr;
 use nom::digit;
+use std::io::Cursor;
+use byteorder::{ReadBytesExt, WriteBytesExt, BigEndian};
 
 use ::parse_utils::is_key_char;
+
+const MAGIC_REQUEST: u8 = 0x80;
 
 #[derive(Debug)]
 pub enum Request {
@@ -23,147 +27,42 @@ pub enum Request {
 }
 
 impl Request {
-    named!(pub parse<&[u8], Request>,
-        alt!(
-            chain!(
-                tag!("set ") ~
-                key: map_res!(take_while!(is_key_char), |x: &[u8]| String::from_utf8(x.to_vec())) ~
-                tag!(" ") ~
-                flags: map_res!(map_res!(digit, str::from_utf8), u16::from_str) ~
-                tag!(" ") ~
-                expiry: map_res!(map_res!(digit, str::from_utf8), u32::from_str) ~
-                tag!(" ") ~
-                len: map_res!(map_res!(digit, str::from_utf8), u32::from_str) ~
-                noreply: map!(opt!(tag!(" noreply")), |x: Option<_>| x.is_some()) ~
-                tag!("\r\n") ~
-                value: map!(take!(len), |x: &[u8]| x.to_vec()) ~
-                tag!("\r\n"),
-                || Request::Set{key: key, value: value, flags: flags, expiry: expiry, noreply: noreply}) |
-            chain!(
-                tag!("add ") ~
-                key: map_res!(take_while!(is_key_char), |x: &[u8]| String::from_utf8(x.to_vec())) ~
-                tag!(" ") ~
-                flags: map_res!(map_res!(digit, str::from_utf8), u16::from_str) ~
-                tag!(" ") ~
-                expiry: map_res!(map_res!(digit, str::from_utf8), u32::from_str) ~
-                tag!(" ") ~
-                len: map_res!(map_res!(digit, str::from_utf8), u32::from_str) ~
-                noreply: map!(opt!(tag!(" noreply")), |x: Option<_>| x.is_some()) ~
-                tag!("\r\n") ~
-                value: map!(take!(len), |x: &[u8]| x.to_vec()) ~
-                tag!("\r\n"),
-                || Request::Add{key: key, value: value, flags: flags, expiry: expiry, noreply: noreply}) |
-            chain!(
-                tag!("replace ") ~
-                key: map_res!(take_while!(is_key_char), |x: &[u8]| String::from_utf8(x.to_vec())) ~
-                tag!(" ") ~
-                flags: map_res!(map_res!(digit, str::from_utf8), u16::from_str) ~
-                tag!(" ") ~
-                expiry: map_res!(map_res!(digit, str::from_utf8), u32::from_str) ~
-                tag!(" ") ~
-                len: map_res!(map_res!(digit, str::from_utf8), u32::from_str) ~
-                noreply: map!(opt!(tag!(" noreply")), |x: Option<_>| x.is_some()) ~
-                tag!("\r\n") ~
-                value: map!(take!(len), |x: &[u8]| x.to_vec()) ~
-                tag!("\r\n"),
-                || Request::Replace{key: key, value: value, flags: flags, expiry: expiry, noreply: noreply}) |
-            chain!(
-                tag!("append ") ~
-                key: map_res!(take_while!(is_key_char), |x: &[u8]| String::from_utf8(x.to_vec())) ~
-                tag!(" ") ~
-                len: map_res!(map_res!(digit, str::from_utf8), u32::from_str) ~
-                noreply: map!(opt!(tag!(" noreply")), |x: Option<_>| x.is_some()) ~
-                tag!("\r\n") ~
-                value: map!(take!(len), |x: &[u8]| x.to_vec()) ~
-                tag!("\r\n"),
-                || Request::Append{key: key, value: value, noreply: noreply}) |
-            chain!(
-                tag!("prepend ") ~
-                key: map_res!(take_while!(is_key_char), |x: &[u8]| String::from_utf8(x.to_vec())) ~
-                tag!(" ") ~
-                len: map_res!(map_res!(digit, str::from_utf8), u32::from_str) ~
-                noreply: map!(opt!(tag!(" noreply")), |x: Option<_>| x.is_some()) ~
-                tag!("\r\n") ~
-                value: map!(take!(len), |x: &[u8]| x.to_vec()) ~
-                tag!("\r\n"),
-                || Request::Prepend{key: key, value: value, noreply: noreply}) |
-            chain!(
-                tag!("cas ") ~
-                key: map_res!(take_while!(is_key_char), |x: &[u8]| String::from_utf8(x.to_vec())) ~
-                tag!(" ") ~
-                flags: map_res!(map_res!(digit, str::from_utf8), u16::from_str) ~
-                tag!(" ") ~
-                expiry: map_res!(map_res!(digit, str::from_utf8), u32::from_str) ~
-                tag!(" ") ~
-                len: map_res!(map_res!(digit, str::from_utf8), u32::from_str) ~
-                tag!(" ") ~
-                cas: map_res!(map_res!(digit, str::from_utf8), u64::from_str) ~
-                noreply: map!(opt!(tag!(" noreply")), |x: Option<_>| x.is_some()) ~
-                tag!("\r\n") ~
-                value: map!(take!(len), |x: &[u8]| x.to_vec()) ~
-                tag!("\r\n"),
-                || Request::Cas{key: key, value: value, flags: flags, expiry: expiry, cas: cas, noreply: noreply}) |
-            chain!(
-                tag!("get") ~
-                keys: many0!(chain!(
-                    tag!(" ") ~
-                    key: map_res!(take_while!(is_key_char), |x: &[u8]| String::from_utf8(x.to_vec())),
-                    || key)) ~
-                tag!("\r\n"),
-                || Request::Get{keys: keys}) |
-            chain!(
-                tag!("gets") ~
-                keys: many0!(chain!(
-                    tag!(" ") ~
-                    key: map_res!(take_while!(is_key_char), |x: &[u8]| String::from_utf8(x.to_vec())),
-                    || key)) ~
-                tag!("\r\n"),
-                || Request::Gets{keys: keys}) |
-            chain!(
-                tag!("delete ") ~
-                key: map_res!(take_while!(is_key_char), |x: &[u8]| String::from_utf8(x.to_vec())) ~
-                noreply: map!(opt!(tag!(" noreply")), |x: Option<_>| x.is_some()) ~
-                tag!("\r\n"),
-                || Request::Delete{key: key, noreply: noreply}) |
-            chain!(
-                tag!("incr ") ~
-                key: map_res!(take_while!(is_key_char), |x: &[u8]| String::from_utf8(x.to_vec())) ~
-                tag!(" ") ~
-                value: map_res!(map_res!(digit, str::from_utf8), u64::from_str) ~
-                noreply: map!(opt!(tag!(" noreply")), |x: Option<_>| x.is_some()) ~
-                tag!("\r\n"),
-                || Request::Incr{key: key, value: value, noreply: noreply}) |
-            chain!(
-                tag!("decr ") ~
-                key: map_res!(take_while!(is_key_char), |x: &[u8]| String::from_utf8(x.to_vec())) ~
-                tag!(" ") ~
-                value: map_res!(map_res!(digit, str::from_utf8), u64::from_str) ~
-                noreply: map!(opt!(tag!(" noreply")), |x: Option<_>| x.is_some()) ~
-                tag!("\r\n"),
-                || Request::Decr{key: key, value: value, noreply: noreply}) |
-            chain!(
-                tag!("touch ") ~
-                key: map_res!(take_while!(is_key_char), |x: &[u8]| String::from_utf8(x.to_vec())) ~
-                tag!(" ") ~
-                expiry: map_res!(map_res!(digit, str::from_utf8), u32::from_str) ~
-                noreply: map!(opt!(tag!(" noreply")), |x: Option<_>| x.is_some()) ~
-                tag!("\r\n"),
-                || Request::Touch{key: key, expiry: expiry, noreply: noreply}) |
-            chain!(
-                tag!("flush_all") ~
-                delay: opt!(chain!(
-                   tag!(" ") ~
-                   delay: map_res!(map_res!(digit, str::from_utf8), u32::from_str),
-                   || delay)) ~
-                noreply: map!(opt!(tag!(" noreply")), |x: Option<_>| x.is_some()) ~
-                tag!("\r\n"),
-                || Request::FlushAll{delay: delay, noreply: noreply}) |
-            map!(tag!("version\r\n"), |_| Request::Version)
-        ));
+    pub fn parse(buf: &[u8]) -> Request {
+        let mut rdr = Cursor::new(buf);
+        let magic = rdr.read_u8
+        
+                || Request::Set{key: key, value: value, flags: flags, expiry: expiry, noreply: noreply}
+                || Request::Add{key: key, value: value, flags: flags, expiry: expiry, noreply: noreply}
+                || Request::Replace{key: key, value: value, flags: flags, expiry: expiry, noreply: noreply}
+                || Request::Append{key: key, value: value, noreply: noreply}
+                || Request::Prepend{key: key, value: value, noreply: noreply}
+                || Request::Cas{key: key, value: value, flags: flags, expiry: expiry, cas: cas, noreply: noreply}
+                || Request::Get{keys: keys}
+                || Request::Gets{keys: keys}
+                || Request::Delete{key: key, noreply: noreply}
+                || Request::Incr{key: key, value: value, noreply: noreply}
+                || Request::Decr{key: key, value: value, noreply: noreply}
+                || Request::Touch{key: key, expiry: expiry, noreply: noreply}
+                || Request::FlushAll{delay: delay, noreply: noreply}
+                || Request::Version
+    }
 
     pub fn build(&self, buf: &mut Vec<u8>) {
+        buf.write_u8::<BigEndian>(MAGIC_REQUEST).unwrap();
+        buf.write_u8::<BigEndian>(0x01).unwrap();
+        buf.write_u16::<BigEndian>(key.len()).unwrap();
+        buf.write_u8::<BigEndian>(0).unwrap();
+        buf.write_u8::<BigEndian>(0).unwrap(); // Data type = raw bytes
+        buf.write_u16::<BigEndian>(0).unwrap(); // vbucket id
+        buf.write_u32::<BigEndian>(value.len()).unwrap();
+        buf.write_u32::<BigEndian>(0).unwrap(); // opaque
+        buf.write_u64::<BigEndian>(cas).unwrap(); // opaque
+
         match *self {
             Request::Set{ref key, ref value, flags, expiry, noreply} => {
+                buf.push(MAGIC_BYTE_REQUEST);
+                buf.push(0x01);
+buf.extend_fro
                 buf.extend_from_slice(b"set ");
                 buf.extend_from_slice(key.as_bytes());
                 buf.extend_from_slice(b" ");
