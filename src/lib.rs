@@ -13,7 +13,6 @@ mod proto;
 mod api;
 mod client;
 mod server;
-mod logger;
 
 pub use request::Request;
 pub use response::Response;
@@ -22,4 +21,3 @@ pub use proto::Proto;
 pub use api::{Api, ApiHelper};
 pub use client::Client;
 pub use server::{ApiService, serve};
-pub use logger::Logger;

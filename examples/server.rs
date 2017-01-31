@@ -4,7 +4,7 @@ extern crate tokio_memcache;
 
 use futures::future;
 use futures::future::FutureResult;
-use tokio_memcache::{Api, ApiService, Value, Logger};
+use tokio_memcache::{Api, ApiService, Value};
 
 pub struct ApiImpl;
 
@@ -63,6 +63,6 @@ pub fn main() {
     let addr = "127.0.0.1:11211".parse().unwrap();
 
     tokio_memcache::serve(addr, || {
-        Ok(Logger::new(ApiService::new(ApiImpl{})))
+        Ok(ApiService::new(ApiImpl{}))
     });
 }

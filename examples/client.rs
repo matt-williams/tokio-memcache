@@ -5,7 +5,7 @@ extern crate tokio_memcache;
 
 use futures::Future;
 use tokio_core::reactor::Core;
-use tokio_memcache::{Client, Api, ApiHelper, Logger};
+use tokio_memcache::{Client, Api, ApiHelper};
 
 pub fn main() {
     let mut core = Core::new().unwrap();
@@ -15,7 +15,6 @@ pub fn main() {
     core.run(
         Client::connect(&addr, &handle)
         .and_then(|client| {
-            let client = Logger::new(client);
             client.version()
             .and_then(move |version| {
                 println!("Version: {}", version);
