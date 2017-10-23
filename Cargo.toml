@@ -2,6 +2,7 @@
 name = "tokio-memcache"
 version = "0.1.0"
 authors = ["Matt Williams <matwilliams@hotmail.com>"]
+license = "MIT"
 
 [dependencies]
 futures = "0.1.7"
